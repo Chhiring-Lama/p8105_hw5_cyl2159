@@ -120,13 +120,13 @@ combined_t_results |>
 
 With the increase in true effect size (true value of $\mu$), the power of the test (to reject false null hypothesis) increases. 
 
-```{r, warning = FALSE, message = FALSE}
+```{r, warning = FALSE, message = FALSE, fig.width = 5, fig.height = 4, out.width = "60%"}
 combined_t_results|> 
   group_by(mu_val) |> 
   mutate(overall_average = mean(estimate)) |> 
   ungroup() |> 
   group_by(mu_val, reject_Ho) |> 
-  summarise(average_for_sampled_w_Ho_rejection = mean(estimate), 
+  summarise(mean_for_sample_w_Ho_rejection = mean(estimate), 
             mean_overall_estimate = overall_average[1]) |> 
   ungroup() |> 
   filter(reject_Ho == TRUE) |> 
@@ -138,29 +138,32 @@ combined_t_results|>
   ggplot(aes(x = mu_val, y = mean, group = mean_type, color = mean_type)) +
   geom_point(alpha = 0.5) +
   labs(x = "True Mean Value", y = "Average Mean Estimate",
-       title = "True versus Estimated Mean Values", color = "")
+       title = "True versus Estimated Mean Values", color = "") +
+  scale_colour_viridis_d(
+    breaks = c("mean_for_sample_w_Ho_rejection", "mean_overall_estimate"),
+    labels = c("Samples with Null Rejected", "All Samples"))
 ```
 
-The sample average of $\hat{\mu}$ across tests for which the null is rejected is approximately equal to the true value of $\mu$. It is because estimated sample mean ($\hat{\mu}$)has to be different from the null value (0) and closer to the actual $\mu$ to reject the null hypothesis. This is the case for when we the true value is 1-6, however, not for when true $\mu$ = 0, since reject the null means that the estimate is different thatn 0. 
+No, the sample average of $\hat{\mu}$ across tests for which the null is rejected is not approximately equal to the true value of $\mu$. It is because the test for rejecting the null focuses on cases where the sample mean is significantly different (0 in this case). When the true mean ($\mu$) is small, it is less likely for the null to be rejected (as shown in the previous plot), so for the null to be rejected, the estimate has to be distinctly different from 0. This leads to a biased estimate. As, $\mu$ increases, it becomes easier to reject null, so the average rejected samples' mean ($\hat{\mu}$) is closer to $\mu$. This is why we see higher deviation in rejected sample mean from the true mean for when $\mu$ = 1 and as $\mu$ increases, it gets closer. 
 
 ## Problem 3
 
 Load homicide data from the Washington Post:
-```{r}
+```{r, warning = FALSE, message = FALSE}
 homicide_data <- read_csv("data/homicide-data.csv") |> 
-  mutate(state = toupper(state))
-cities <- pull(homicide_data, city) |> unique() |> length()
+  mutate(state = toupper(state), 
+         city_state = str_c(city, state, sep = ", "), 
+         result = case_when(disposition %in% c("Closed without arrest", 
+                                                "Open/No arrest") ~ "unsolved", 
+                            disposition == "Closed by arrest" ~ "solved")) 
+cities <- pull(homicide_data, city_state) |> unique() |> length()
 states <- pull(homicide_data, state) |> unique() |> length()
 ```
 
-The raw dataset has `r nrow(homicide_data)` rows and `r ncol(homicide_data)` columns where each row is a homicide case. Along with the case number, reported date, victim's name, their demographic information, it also has geographical information such as city, state, longitude and latitude. There are cases from `r cities` cities from `r `states` states. Similarly, the column `disposition` remarks end result of the case. I corrected state values to be uppercase, created a city_state variable, and summarized the total number of homicides and number of unsolved homicides in each city. Below is the list of 10 cities with most unsolved homicides. 
+The raw dataset has `r nrow(homicide_data)` rows and `r ncol(homicide_data)` columns where each row is a homicide case. Along with the case number, reported date, victim's name, their demographic information, it also has geographical information such as city, state, longitude and latitude. There are cases from `r cities` cities from `r states` states. Similarly, the column `disposition` remarks end result of the case. I corrected state values to be uppercase, created a city_state variable, and summarized the total number of homicides and number of unsolved homicides in each city. Below is the list of 10 cities with most unsolved homicides. 
 
-```{r}
+```{r, warning = FALSE, message = FALSE}
 homicide_data_clean <- homicide_data |> 
-  mutate(city_state = str_c(city, state, sep = ", "), 
-         result = case_when(disposition %in% c("Closed without arrest", 
-                                                "Open/No arrest") ~ "unsolved", 
-                            disposition == "Closed by arrest" ~ "solved")) |> 
   group_by(city_state, result) |> 
   summarize(homicide = n()) |> 
   pivot_wider(
@@ -171,7 +174,7 @@ homicide_data_clean <- homicide_data |>
                               TRUE ~ unsolved), 
     total_homicide = sum(solved, unsolved, na.rm = TRUE)) |> 
   select(city_state, total_homicide, unsolved) |> 
-  arrange(unsolved)
+  arrange(desc(unsolved))
 
 homicide_data_clean |> 
   head(10) |> 
@@ -179,7 +182,7 @@ homicide_data_clean |>
 ```
 
 Running proportion test for Baltimore to estimate the proportion of homicides that are unsolved:
-```{r}
+```{r, warning = FALSE, message = FALSE}
 baltimore_data <- homicide_data_clean |> 
   filter(city_state == "Baltimore, MD")
 
@@ -194,10 +197,11 @@ prop_result <- prop_result |>
   select(estimate, conf_low, conf_high) 
 
 prop_result|> 
+  mutate_if(is.numeric, round, 3) |> 
   knitr::kable()
 ```
 
-The estimated proportion of unsolved homicides is 0.646. We are 95% confident that true value of proportion of unsolved homicides is between `r pull(prop_result,conf_low) |> round(digits = 3)` and `r pull(prop_result,conf_high) |> round(digits = 3)`. \
+The estimated proportion of unsolved homicides in Baltimore, MD is 0.646. We are 95% confident that true value of proportion of unsolved homicides is between `r pull(prop_result,conf_low) |> round(digits = 3)` and `r pull(prop_result,conf_high) |> round(digits = 3)`. \
 
 Function to run `prop.test` for each of the cities:
 ```{r, warning = FALSE, message = FALSE}
@@ -213,23 +217,29 @@ prop_function <- function(city_name) {
   return(prop_result)
 }
 
-prop_result_all_cities <- homicide_data_clean |> 
-  mutate(prop_res = map(city_state, prop_function)) |> 
+prop_result_all_cities <- expand_grid(
+  cities = pull(homicide_data_clean, city_state)
+  ) |> 
+  mutate(prop_res = map(cities, prop_function)) |> 
   unnest(prop_res) |> 
-  select(estimate, conf_low, conf_high) |> 
+  select(cities, estimate, conf_low, conf_high) |> 
   as_tibble()
 
 ```
 
 Plot the results
-```{r, fig.width = 5, fig.height = 7, out.width = "80%"}
+```{r, fig.width = 6, fig.height = 7, out.width = "90%"}
 prop_result_all_cities |> 
-  mutate(city_state = fct_reorder(city_state, estimate)) |>
-  ggplot(aes(x = city_state, y = estimate)) +
+  mutate(cities = fct_reorder(cities, estimate)) |>
+  ggplot(aes(x = cities, y = estimate)) +
   geom_errorbar(aes(ymin = conf_low, ymax = conf_high),color = "darkred", width = 0.5)+
   geom_point(size = 2, shape = 21, fill = "white") +
+  labs(y = "Proportion Estimate", x = "City",
+       title = "Estimate of Unsolved Homicide cases (w/ 95% CI)", color = "") +
   coord_flip()
 ```
+
+Among the `r cities` cities, Chicago has the highest proportion of unsolved homicide cases, followed by New Orleans and Baltimore. 
 
 
 
